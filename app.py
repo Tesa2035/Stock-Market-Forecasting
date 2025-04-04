@@ -9,26 +9,33 @@ from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-# Load Data
+# Streamlit App Title
 st.title("📈 Stock Market Prediction using LSTM")
+
+# File Upload
 uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file:
+    # Load and preprocess data
     df = pd.read_csv(uploaded_file)
     df.rename(columns={"Unnamed: 0": "date"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(by="date")
 
-    # Display Data
+    # Display dataset
     st.subheader("Dataset Overview")
     st.write(df.head())
 
-    # Preprocessing
+    # Select numeric columns for scaling
     numeric_cols = ["open", "high", "low", "close", "adjclose", "volume"]
     scaler = MinMaxScaler(feature_range=(0, 1))
     df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
 
-    # Data Visualization
+    # Create a separate scaler for the "close" column
+    close_scaler = MinMaxScaler(feature_range=(0, 1))
+    df["close"] = close_scaler.fit_transform(df[["close"]])  # Fit only on close price
+
+    # Plot Closing Price Over Time
     st.subheader("Closing Price Over Time")
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(df["date"], df["close"], label="Normalized Closing Price", color="blue")
@@ -37,7 +44,7 @@ if uploaded_file:
     ax.legend()
     st.pyplot(fig)
 
-    # Prepare Data for LSTM
+    # Prepare data for LSTM
     data = df[["close"]].values
 
     def create_sequences(data, time_step=10):
@@ -54,10 +61,11 @@ if uploaded_file:
     X_train, y_train = X[:train_size], y[:train_size]
     X_test, y_test = X[train_size:], y[train_size:]
 
+    # Reshape input for LSTM
     X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
     X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
 
-    # LSTM Model
+    # Build LSTM model
     st.subheader("LSTM Model Training")
     model = Sequential([
         LSTM(50, return_sequences=True, input_shape=(time_step, 1)),
@@ -71,8 +79,10 @@ if uploaded_file:
 
     # Predictions
     y_pred = model.predict(X_test)
-    y_pred_inv = scaler.inverse_transform(np.concatenate((y_pred, np.zeros_like(y_pred)), axis=1))[:, 0]
-    y_test_inv = scaler.inverse_transform(np.concatenate((y_test.reshape(-1, 1), np.zeros_like(y_test.reshape(-1, 1))), axis=1))[:, 0]
+
+    # Inverse transform using only the "close" feature
+    y_pred_inv = close_scaler.inverse_transform(y_pred)
+    y_test_inv = close_scaler.inverse_transform(y_test.reshape(-1, 1))
 
     # Model Evaluation
     mae = mean_absolute_error(y_test_inv, y_pred_inv)
@@ -101,11 +111,9 @@ if uploaded_file:
     volume = st.number_input("Trading Volume", min_value=0.0)
 
     if st.button("Predict"):
-        user_data = [prev_close, open_price, high_price, low_price, volume]
-        input_scaled = scaler.transform([user_data])
+        user_data = [prev_close]
+        input_scaled = close_scaler.transform([user_data])  # Scale only the close price
         sequence = np.array([input_scaled])
         prediction_scaled = model.predict(sequence)
-        predicted_price = scaler.inverse_transform(
-            np.concatenate((prediction_scaled, np.zeros((1, len(numeric_cols) - 1))), axis=1)
-        )[0, 0]
+        predicted_price = close_scaler.inverse_transform(prediction_scaled)[0, 0]
         st.success(f"📈 **Predicted Stock Price:** {predicted_price:.2f}")
